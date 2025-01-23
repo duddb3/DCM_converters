@@ -38,6 +38,7 @@ function dcm2nii_3DVANE(indir,outdir)
         end
         imtype = categorical(imtype);
         catch
+            cellfun(@(f) strrep(f,'\JP2K LOSSY',''),heads.ImageType,'UniformOutput',false)
             imtype = categorical(heads.ImageType,...
                 {'DERIVED\PRIMARY\F\F\DERIVED','DERIVED\PRIMARY\W\W\DERIVED','DERIVED\PRIMARY\IP\IP\DERIVED','DERIVED\PRIMARY\OP\OP\DERIVED'},...
                 {'F','W','IP','OP'});

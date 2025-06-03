@@ -1,15 +1,15 @@
-function dcm2nii_3DVANE(indir,outdir)
-    % A custom DICOM to NIFTI converter to handle 3D VANE (Philips) images.
-    % The code will create a NIFTI file for each image type that the scan
-    % produce.
+function dcm2nii_mDIXON(indir,outdir)
+    % A custom DICOM to NIFTI converter to handle mDIXON Quant 
+    % (from Philips) images. The code will create a NIFTI file for each 
+    % image type that the scan produces.
     %
     % Usage:
-    %   dcm2nii_3DVANE(indir,outdir)
-    %       indir: the file path containing all the DICOM files for the 3D
-    %       VANE acquisition.
+    %   dcm2nii_mDIXON(indir,outdir)
+    %       indir: the file path containing all the DICOM files for the 
+    %           mDIXON Quant acquisition.
     %       outdir: the file path where the output images are written. File
-    %       name are 3D_VANE_*.nii where * is F, W, IP, and OP for Fat,
-    %       Water, In-Phase, and Out-of-Phase, respectively.
+    %       name are mDIXON_*.nii where * is W, F, FF, and T2_STAR for
+    %       Water, Fat, Fat Fraction, and T2*, respectively.
 
     % Make sure target directory exists
     if ~isfolder(outdir)
@@ -26,23 +26,18 @@ function dcm2nii_3DVANE(indir,outdir)
     heads = struct2table(heads);
 
     % Get Philips private head info specifying which image type each file
-    % belongs to (i.e., W, F, IP, OP)
+    % belongs to (i.e., W, F, FF, T2_STAR)
     try
-        imtype = categorical(heads.Private_2005_1011);
+        imtype = categorical(cellfun(@(f) strtrim(char(f')),heads.Private_2005_1011,'Uni',0));
     catch
-        try
-        temprep = [heads.Private_2005_1011{:}]';
-        imtype = cell(length(temprep),1);
-        for n=1:length(temprep)
-            imtype{n} = strtrim(char(temprep(n,:)));
-        end
-        imtype = categorical(imtype);
-        catch
-            cellfun(@(f) strrep(f,'\JP2K LOSSY',''),heads.ImageType,'UniformOutput',false)
-            imtype = categorical(heads.ImageType,...
-                {'DERIVED\PRIMARY\F\F\DERIVED','DERIVED\PRIMARY\W\W\DERIVED','DERIVED\PRIMARY\IP\IP\DERIVED','DERIVED\PRIMARY\OP\OP\DERIVED'},...
-                {'F','W','IP','OP'});
-        end
+        utypes = unique(heads.ImageType,'stable');
+        wi = find(contains(utypes,'\W\W\'));
+        fi = find(contains(utypes,'\F\F\'));
+        ffi = find(contains(utypes,'\FF\FF\'));
+        t2i = find(contains(utypes,'\T2_STAR'));
+        imtype = categorical(heads.ImageType,...
+            utypes([wi fi ffi t2i]),...
+            {'W','F','FF','T2_STAR'});
     end
     types = unique(imtype);
 
@@ -51,7 +46,7 @@ function dcm2nii_3DVANE(indir,outdir)
         % get headers belonging to that image type
         theads = heads(imtype==types(n),:);
         % find the unique slice locations and their order (ascending)
-        [~,ia,~] = unique(theads.SliceLocation);
+        [~,ia,~] = unique(theads.SliceLocation,'sorted');
         theads = theads(ia,:);
         % Instantiate image array
         tmpI = dicomread(theads.Filename{1});
@@ -111,7 +106,10 @@ function dcm2nii_3DVANE(indir,outdir)
         fclose(fid);
         gzip(fname)
         delete(fname)
+
+
     end
+
 
     % Retrun quaternion abcd from normalized matrix R (3x3)
     function [q, proper] = dcm2quat(R)

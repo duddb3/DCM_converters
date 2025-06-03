@@ -1,4 +1,4 @@
-function dcm2nii_mDIXON(indir,outdir)
+function dcm2nii_mDIXON(indir,outdir,suffix)
     % A custom DICOM to NIFTI converter to handle mDIXON Quant 
     % (from Philips) images. The code will create a NIFTI file for each 
     % image type that the scan produces.
@@ -8,12 +8,13 @@ function dcm2nii_mDIXON(indir,outdir)
     %       indir: the file path containing all the DICOM files for the 
     %           mDIXON Quant acquisition.
     %       outdir: the file path where the output images are written. File
-    %       name are mDIXON_*.nii where * is W, F, FF, and T2_STAR for
-    %       Water, Fat, Fat Fraction, and T2*, respectively.
+    %       name are {prefix_}mDIXON_*.nii where * is W, F, FF, and T2_STAR
+    %       for Water, Fat, Fat Fraction, and T2*, respectively.
 
-    % Make sure target directory exists
-    if ~isfolder(outdir)
-        mkdir(outdir)
+    if ~exist('suffix','var')
+        suffix = '';
+    elseif ~strcmp(suffix(1),'_')
+        suffix = ['_' suffix];
     end
 
     % Get list of dicom files
@@ -29,15 +30,28 @@ function dcm2nii_mDIXON(indir,outdir)
     % belongs to (i.e., W, F, FF, T2_STAR)
     try
         imtype = categorical(cellfun(@(f) strtrim(char(f')),heads.Private_2005_1011,'Uni',0));
+        if ~all(ismember(imtype,{'W','F','FF','T2_STAR'}))
+            fprintf(2,'Unexpected image types in input directory. Aborting\n')
+            return
+        end
     catch
-        utypes = unique(heads.ImageType,'stable');
-        wi = find(contains(utypes,'\W\W\'));
-        fi = find(contains(utypes,'\F\F\'));
-        ffi = find(contains(utypes,'\FF\FF\'));
-        t2i = find(contains(utypes,'\T2_STAR'));
-        imtype = categorical(heads.ImageType,...
-            utypes([wi fi ffi t2i]),...
-            {'W','F','FF','T2_STAR'});
+        try
+            utypes = unique(heads.ImageType,'stable');
+            wi = find(contains(utypes,'\W\W\'));
+            fi = find(contains(utypes,'\F\F\'));
+            ffi = find(contains(utypes,'\FF\FF\'));
+            t2i = find(contains(utypes,'\T2_STAR'));
+            if length(utypes)~=4 ||  ~all(ismember([wi fi ffi t2i],1:4))
+                fprintf(2,'Unexpected image types in input directory. Aborting\n')
+                return
+            end
+            imtype = categorical(heads.ImageType,...
+                utypes([wi fi ffi t2i]),...
+                {'W','F','FF','T2_STAR'});
+        catch
+            fprintf(2,'Input directory does not contain imaging data. Aborting\n')
+            return
+        end
     end
     types = unique(imtype);
 
@@ -65,7 +79,7 @@ function dcm2nii_mDIXON(indir,outdir)
             I(:,:,s) = dicomread(theads.Filename{end-s+1});
         end
         % Create a nifti header based on dicom metadata
-        fname = fullfile(outdir,['mDIXON_' char(types(n)) '.nii']);
+        fname = fullfile(outdir,['mDIXON_' char(types(n)) suffix '.nii']);
         info.Filename = fname;
         info.AdditiveOffset = theads.RescaleIntercept(1);
         info.MultiplicativeScaling = theads.RescaleSlope(1);
@@ -94,6 +108,9 @@ function dcm2nii_mDIXON(indir,outdir)
         info.Transform.T(4,1:3) = theads.ImagePositionPatient{1};
         info.Qfactor = 1;
         % Save the nifti file
+        if ~isfolder(outdir)
+            mkdir(outdir)
+        end
         niftiwrite(rot90(flip(I)),fname,info);
 
         % Get the quarternions, add to header

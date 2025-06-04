@@ -163,7 +163,9 @@ function dcm2nii_3DVANE(indir,outdir,rootname)
         niftiwrite(rot90(flip(I)),fname,info);
 
         % Get the quarternions, add to header
-        q = dcm2quat(info.Transform.T(1:3,1:3)');
+        [u,s,v] = svd(info.Transform.T(1:3,1:3)');
+        R = u*v';
+        q = dcm2quat(R);
         fid = fopen(fname,'r+');
         fseek(fid,252,'bof');
         fwrite(fid,1,'short');

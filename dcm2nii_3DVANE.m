@@ -20,63 +20,115 @@ function dcm2nii_3DVANE(indir,outdir)
     dcms = dir(fullfile(indir,'*.dcm'));
     % Parse the header for position information
     heads = dicominfo(fullfile(dcms(1).folder,dcms(1).name));
-    parfor n=2:length(dcms)
-        heads(n) = dicominfo(fullfile(dcms(n).folder,dcms(n).name));
-    end
-    heads = struct2table(heads);
-
-    % Get Philips private head info specifying which image type each file
-    % belongs to (i.e., W, F, IP, OP)
-    try
-        imtype = categorical(heads.Private_2005_1011);
-    catch
+    if isscalar(dcms) && isfield(heads,'PerFrameFunctionalGroupsSequence')
+        % enhanced DICOM
+        A = squeeze(dicomread(heads));
         try
-        temprep = [heads.Private_2005_1011{:}]';
-        imtype = cell(length(temprep),1);
-        for n=1:length(temprep)
-            imtype{n} = strtrim(char(temprep(n,:)));
-        end
-        imtype = categorical(imtype);
+            % get the private tag info from the nested objects
+            tags = arrayfun(@(f) heads.PerFrameFunctionalGroupsSequence.(sprintf('Item_%i',f)).Private_2005_140f.Item_1.Private_2005_1011',1:size(A,3),'Uni',0);
+            imtype = categorical(cellfun(@(f) strtrim(char(f)),tags,'Uni',0));
         catch
-            cellfun(@(f) strrep(f,'\JP2K LOSSY',''),heads.ImageType,'UniformOutput',false)
-            imtype = categorical(heads.ImageType,...
-                {'DERIVED\PRIMARY\F\F\DERIVED','DERIVED\PRIMARY\W\W\DERIVED','DERIVED\PRIMARY\IP\IP\DERIVED','DERIVED\PRIMARY\OP\OP\DERIVED'},...
-                {'F','W','IP','OP'});
+            fprintf(2,'You need to code this Jon\n')
+            return
+        end
+        types = unique(imtype);
+        for n=1:length(types)
+            idx = find(imtype==types(n));
+
+
+            % populate metadata table with requisite information
+            theads = table();
+            % Rescale slope and intercept
+            theads.RescaleSlope = arrayfun(@(f) heads.PerFrameFunctionalGroupsSequence.(sprintf('Item_%i',f)).PixelValueTransformationSequence.Item_1.RescaleSlope,idx)';
+            theads.RescaleIntercept = arrayfun(@(f) heads.PerFrameFunctionalGroupsSequence.(sprintf('Item_%i',f)).PixelValueTransformationSequence.Item_1.RescaleIntercept,idx)';
+            % Window level
+            theads.WindowCenter = arrayfun(@(f) heads.PerFrameFunctionalGroupsSequence.(sprintf('Item_%i',f)).Private_2005_140f.Item_1.WindowCenter,idx)';
+            theads.WindowWidth = arrayfun(@(f) heads.PerFrameFunctionalGroupsSequence.(sprintf('Item_%i',f)).Private_2005_140f.Item_1.WindowWidth,idx)';
+            % Pixel info
+            theads.PixelSpacing = arrayfun(@(f) heads.PerFrameFunctionalGroupsSequence.(sprintf('Item_%i',f)).PixelMeasuresSequence.Item_1.PixelSpacing,idx,'Uni',0)';
+            theads.SpacingBetweenSlices = arrayfun(@(f) heads.PerFrameFunctionalGroupsSequence.(sprintf('Item_%i',f)).PixelMeasuresSequence.Item_1.SpacingBetweenSlices,idx)';
+            % Orientation & Position
+            theads.ImageOrientationPatient = arrayfun(@(f) heads.PerFrameFunctionalGroupsSequence.(sprintf('Item_%i',f)).PlaneOrientationSequence.Item_1.ImageOrientationPatient,idx,'Uni',0)';
+            theads.ImagePositionPatient = arrayfun(@(f) heads.PerFrameFunctionalGroupsSequence.(sprintf('Item_%i',f)).PlanePositionSequence.Item_1.ImagePositionPatient,idx,'Uni',0)';
+
+            % Get the image in slice-ascending order
+            [~,order] = sort(cellfun(@(f) f(3),theads.ImagePositionPatient));
+            theads = theads(order,:);
+            I = A(:,:,idx(order));
+
+            % Save the nifti file
+            fname = fullfile(outdir,['mDIXON_' char(types(n)) suffix '.nii']);
+            if ~isfolder(outdir)
+                mkdir(outdir)
+            end
+            writenii(I,fname,theads);
+        end
+    else
+        parfor n=2:length(dcms)
+            heads(n) = dicominfo(fullfile(dcms(n).folder,dcms(n).name));
+        end
+        heads = struct2table(heads);
+        % Get Philips private head info specifying which image type each file
+        % belongs to (i.e., W, F, IP, OP)
+        try
+            imtype = categorical(heads.Private_2005_1011);
+        catch
+            try
+            temprep = [heads.Private_2005_1011{:}]';
+            imtype = cell(length(temprep),1);
+            for n=1:length(temprep)
+                imtype{n} = strtrim(char(temprep(n,:)));
+            end
+            imtype = categorical(imtype);
+            catch
+                cellfun(@(f) strrep(f,'\JP2K LOSSY',''),heads.ImageType,'UniformOutput',false)
+                imtype = categorical(heads.ImageType,...
+                    {'DERIVED\PRIMARY\F\F\DERIVED','DERIVED\PRIMARY\W\W\DERIVED','DERIVED\PRIMARY\IP\IP\DERIVED','DERIVED\PRIMARY\OP\OP\DERIVED'},...
+                    {'F','W','IP','OP'});
+            end
+        end
+        types = unique(imtype);
+    
+        % For each image type
+        for n=1:length(types)
+            % get headers belonging to that image type
+            theads = heads(imtype==types(n),:);
+            % find the unique slice locations and their order (ascending)
+            [~,ia,~] = unique(theads.SliceLocation);
+            theads = theads(ia,:);
+            % Instantiate image array
+            tmpI = dicomread(theads.Filename{1});
+            switch class(tmpI)
+                case 'int16'
+                    I = int16(zeros(theads.Rows(1),theads.Columns(1),height(theads)));
+                case 'uint16'
+                    I = uint16(zeros(theads.Rows(1),theads.Columns(1),height(theads)));
+                otherwise
+                    continue
+            end
+            parfor s=1:height(theads)
+                % % Read the image
+                I(:,:,s) = dicomread(theads.Filename{end-s+1});
+            end
+
+            % Save the nifti file
+            fname = fullfile(outdir,['mDIXON_' char(types(n)) suffix '.nii']);
+            if ~isfolder(outdir)
+                mkdir(outdir)
+            end
+            writenii(I,fname,theads);
         end
     end
-    types = unique(imtype);
 
-    % For each image type
-    for n=1:length(types)
-        % get headers belonging to that image type
-        theads = heads(imtype==types(n),:);
-        % find the unique slice locations and their order (ascending)
-        [~,ia,~] = unique(theads.SliceLocation);
-        theads = theads(ia,:);
-        % Instantiate image array
-        tmpI = dicomread(theads.Filename{1});
-        switch class(tmpI)
-            case 'int16'
-                I = int16(zeros(theads.Rows(1),theads.Columns(1),height(theads)));
-                info.Datatype = 'int16';
-            case 'uint16'
-                I = uint16(zeros(theads.Rows(1),theads.Columns(1),height(theads)));
-                info.Datatype = 'uint16';
-            otherwise
-                continue
-        end
-        parfor s=1:height(theads)
-            % % Read the image
-            I(:,:,s) = dicomread(theads.Filename{end-s+1});
-        end
+    function writenii(I,fname,theads)
         % Create a nifti header based on dicom metadata
-        fname = fullfile(outdir,['mDIXON_' char(types(n)) '.nii']);
         info.Filename = fname;
+        info.Datatype = class(I);
         info.AdditiveOffset = theads.RescaleIntercept(1);
         info.MultiplicativeScaling = theads.RescaleSlope(1);
-        info.DisplayIntensityRange = [
-            theads.WindowCenter(1)-theads.WindowWidth(1)/2
-            theads.WindowCenter(1)+theads.WindowWidth(1)/2];
+        info.DisplayIntensityRange = round(mean(cat(2,...
+            theads.WindowCenter-theads.WindowWidth./2,...
+            theads.WindowCenter+theads.WindowWidth./2)))';
         info.Filemoddate = char(datetime);
         info.Version = 'NIfTI1';
         info.Description = '';
@@ -98,7 +150,6 @@ function dcm2nii_3DVANE(indir,outdir)
         info.Transform.T(4,4) = 1;
         info.Transform.T(4,1:3) = theads.ImagePositionPatient{1};
         info.Qfactor = 1;
-        % Save the nifti file
         niftiwrite(rot90(flip(I)),fname,info);
 
         % Get the quarternions, add to header

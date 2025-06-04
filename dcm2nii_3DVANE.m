@@ -1,19 +1,20 @@
-function dcm2nii_3DVANE(indir,outdir)
+function dcm2nii_3DVANE(indir,outdir,rootname)
     % A custom DICOM to NIFTI converter to handle 3D VANE (Philips) images.
     % The code will create a NIFTI file for each image type that the scan
     % produce.
     %
     % Usage:
-    %   dcm2nii_3DVANE(indir,outdir)
+    %   dcm2nii_3DVANE(indir,outdir,rootname)
     %       indir: the file path containing all the DICOM files for the 3D
     %       VANE acquisition.
     %       outdir: the file path where the output images are written. File
-    %       name are 3D_VANE_*.nii where * is F, W, IP, and OP for Fat,
+    %       name are {rootname}_*.nii where * is F, W, IP, and OP for Fat,
     %       Water, In-Phase, and Out-of-Phase, respectively.
 
-    % Make sure target directory exists
-    if ~isfolder(outdir)
-        mkdir(outdir)
+    if ~exist('rootname','var')
+        [~,rootname] = fileparts(indir);
+    elseif ~strcmp(rootname(1),'_')
+        rootname = ['_' rootname];
     end
 
     % Get list of dicom files
@@ -57,7 +58,7 @@ function dcm2nii_3DVANE(indir,outdir)
             I = A(:,:,idx(order));
 
             % Save the nifti file
-            fname = fullfile(outdir,['mDIXON_' char(types(n)) suffix '.nii']);
+            fname = fullfile(outdir,[rootname '_' char(types(n)) '.nii']);
             if ~isfolder(outdir)
                 mkdir(outdir)
             end
@@ -72,19 +73,27 @@ function dcm2nii_3DVANE(indir,outdir)
         % belongs to (i.e., W, F, IP, OP)
         try
             imtype = categorical(heads.Private_2005_1011);
+            if ~all(ismember(imtype,{'W','F','IP','OP'}))
+                fprintf(2,'Unexpected image types in input directory. Aborting\n')
+                return
+            end
         catch
             try
-            temprep = [heads.Private_2005_1011{:}]';
-            imtype = cell(length(temprep),1);
-            for n=1:length(temprep)
-                imtype{n} = strtrim(char(temprep(n,:)));
-            end
-            imtype = categorical(imtype);
-            catch
-                cellfun(@(f) strrep(f,'\JP2K LOSSY',''),heads.ImageType,'UniformOutput',false)
+                utypes = unique(heads.ImageType,'stable');
+                wi = find(contains(utypes,'\W\W\'));
+                fi = find(contains(utypes,'\F\F\'));
+                ipi = find(contains(utypes,'\IP\IP\'));
+                opi = find(contains(utypes,'\OP\OP\'));
+                if length(utypes)~=4 ||  ~all(ismember([wi fi ipi opi],1:4))
+                    fprintf(2,'Unexpected image types in input directory. Aborting\n')
+                    return
+                end
                 imtype = categorical(heads.ImageType,...
-                    {'DERIVED\PRIMARY\F\F\DERIVED','DERIVED\PRIMARY\W\W\DERIVED','DERIVED\PRIMARY\IP\IP\DERIVED','DERIVED\PRIMARY\OP\OP\DERIVED'},...
-                    {'F','W','IP','OP'});
+                    utypes([wi fi ipi opi]),...
+                    {'W','F','IP','OP'});
+            catch
+                fprintf(2,'Input directory does not contain imaging data. Aborting\n')
+                return
             end
         end
         types = unique(imtype);
@@ -104,6 +113,7 @@ function dcm2nii_3DVANE(indir,outdir)
                 case 'uint16'
                     I = uint16(zeros(theads.Rows(1),theads.Columns(1),height(theads)));
                 otherwise
+                    fprintf(sprintf('Image type was %s (expected int16 or uint16), skipping\n',class(tmpI)))
                     continue
             end
             parfor s=1:height(theads)

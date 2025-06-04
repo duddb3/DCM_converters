@@ -1,20 +1,20 @@
-function dcm2nii_mDIXON(indir,outdir,suffix)
+function dcm2nii_mDIXON(indir,outdir,rootname)
     % A custom DICOM to NIFTI converter to handle mDIXON Quant 
     % (from Philips) images. The code will create a NIFTI file for each 
     % image type that the scan produces.
     %
     % Usage:
-    %   dcm2nii_mDIXON(indir,outdir)
+    %   dcm2nii_mDIXON(indir,outdir,rootname)
     %       indir: the file path containing all the DICOM files for the 
     %           mDIXON Quant acquisition.
     %       outdir: the file path where the output images are written. File
-    %       name are {prefix_}mDIXON_*.nii where * is W, F, FF, and T2_STAR
+    %       name are {rootname}_*.nii where * is W, F, FF, and T2_STAR
     %       for Water, Fat, Fat Fraction, and T2*, respectively.
 
-    if ~exist('suffix','var')
-        suffix = '';
-    elseif ~strcmp(suffix(1),'_')
-        suffix = ['_' suffix];
+    if ~exist('rootname','var')
+        [~,rootname] = fileparts(indir);
+    elseif ~strcmp(rootname(1),'_')
+        rootname = ['_' rootname];
     end
 
     % Get list of dicom files
@@ -58,7 +58,7 @@ function dcm2nii_mDIXON(indir,outdir,suffix)
             I = A(:,:,idx(order));
 
             % Save the nifti file
-            fname = fullfile(outdir,['mDIXON_' char(types(n)) suffix '.nii']);
+            fname = fullfile(outdir,[rootname '_' char(types(n)) '.nii']);
             if ~isfolder(outdir)
                 mkdir(outdir)
             end
@@ -122,15 +122,13 @@ function dcm2nii_mDIXON(indir,outdir,suffix)
             end
     
             % Save the nifti file
-            fname = fullfile(outdir,['mDIXON_' char(types(n)) suffix '.nii']);
+            fname = fullfile(outdir,['mDIXON_' char(types(n)) rootname '.nii']);
             if ~isfolder(outdir)
                 mkdir(outdir)
             end
             writenii(I,fname,theads);
         end
     end
-
-
 
     function writenii(I,fname,theads)
         % Create a nifti header based on dicom metadata
@@ -175,7 +173,6 @@ function dcm2nii_mDIXON(indir,outdir,suffix)
         gzip(fname)
         delete(fname)
     end
-
 
     % Retrun quaternion abcd from normalized matrix R (3x3)
     function [q, proper] = dcm2quat(R)

@@ -1,4 +1,4 @@
-function dcm2nii_mDIXON(indir,outdir,rootname)
+function fname = dcm2nii_mDIXON(indir,outdir,rootname)
     % A custom DICOM to NIFTI converter to handle mDIXON Quant 
     % (from Philips) images. The code will create a NIFTI file for each 
     % image type that the scan produces.
@@ -13,8 +13,6 @@ function dcm2nii_mDIXON(indir,outdir,rootname)
 
     if ~exist('rootname','var')
         [~,rootname] = fileparts(indir);
-    elseif ~strcmp(rootname(1),'_')
-        rootname = ['_' rootname];
     end
 
     % Get list of dicom files
@@ -33,6 +31,7 @@ function dcm2nii_mDIXON(indir,outdir,rootname)
             return
         end
         types = unique(imtype);
+        fname = cell(length(types),1);
         for n=1:length(types)
             idx = find(imtype==types(n));
 
@@ -58,11 +57,11 @@ function dcm2nii_mDIXON(indir,outdir,rootname)
             I = A(:,:,idx(order));
 
             % Save the nifti file
-            fname = fullfile(outdir,[rootname '_' char(types(n)) '.nii']);
+            fname{n} = fullfile(outdir,[rootname '_' char(types(n)) '.nii']);
             if ~isfolder(outdir)
                 mkdir(outdir)
             end
-            writenii(I,fname,theads);
+            writenii(I,fname{n},theads);
         end
     else
         parfor n=2:length(dcms)
@@ -73,9 +72,9 @@ function dcm2nii_mDIXON(indir,outdir,rootname)
         % belongs to (i.e., W, F, FF, T2_STAR)
         try
             imtype = categorical(cellfun(@(f) strtrim(char(f')),heads.Private_2005_1011,'Uni',0));
-            if ~all(ismember(imtype,{'W','F','FF','T2_STAR'}))
-                fprintf(2,'Unexpected image types in input directory. Aborting\n')
-                return
+            if ~all(ismember(imtype,{'W','F','FF','T2_STAR','IP','OP'}))
+                fprintf(2,'Unexpected image types in input directory. Check your output.\n')
+                imtype = categorical(cellfun(@(f) strrep(f,'\','_'),heads.ImageType,'Uni',0));
             end
         catch
             try
@@ -85,48 +84,52 @@ function dcm2nii_mDIXON(indir,outdir,rootname)
                 ffi = find(contains(utypes,'\FF\FF\'));
                 t2i = find(contains(utypes,'\T2_STAR'));
                 if length(utypes)~=4 ||  ~all(ismember([wi fi ffi t2i],1:4))
-                    fprintf(2,'Unexpected image types in input directory. Aborting\n')
-                    return
+                    fprintf(2,'Unexpected image types in input directory. Check your output.\n')
+                    imtype = categorical(cellfun(@(f) strrep(f,'\','_'),heads.ImageType,'Uni',0));
+                else
+                    imtype = categorical(heads.ImageType,...
+                        utypes([wi fi ffi t2i]),...
+                        {'W','F','FF','T2_STAR'});
                 end
-                imtype = categorical(heads.ImageType,...
-                    utypes([wi fi ffi t2i]),...
-                    {'W','F','FF','T2_STAR'});
             catch
                 fprintf(2,'Input directory does not contain imaging data. Aborting\n')
                 return
             end
         end
         types = unique(imtype);
-    
         % For each image type
+        fname = cell(length(types),1);
         for n=1:length(types)
             % get headers belonging to that image type
             theads = heads(imtype==types(n),:);
             % find the unique slice locations and their order (ascending)
-            [~,ia,~] = unique(theads.SliceLocation,'sorted');
-            theads = theads(ia,:);
+            theads = sortrows(theads,'SliceLocation');
+            [~,ia,ic] = unique(theads.SliceLocation,'stable');
             % Instantiate image array
             tmpI = dicomread(theads.Filename{1});
             switch class(tmpI)
                 case 'int16'
-                    I = int16(zeros(theads.Rows(1),theads.Columns(1),height(theads)));
+                    I = int16(zeros(theads.Rows(1),theads.Columns(1),length(ia),length(ic)/length(ia)));
                 case 'uint16'
-                    I = uint16(zeros(theads.Rows(1),theads.Columns(1),height(theads)));
+                    I = uint16(zeros(theads.Rows(1),theads.Columns(1),length(ia),length(ic)/length(ia)));
                 otherwise
                     fprintf(sprintf('Image type was %s (expected int16 or uint16), skipping\n',class(tmpI)))
                     continue
             end
-            parfor s=1:height(theads)
-                % % Read the image
-                I(:,:,s) = dicomread(theads.Filename{end-s+1});
+            for s=1:length(ia)
+                frames = find(ic==ic(ia(s)));
+                for d=1:length(frames)
+                    % Read the image
+                    I(:,:,end-s+1,d) = dicomread(theads.Filename{frames(d)});
+                end
             end
     
             % Save the nifti file
-            fname = fullfile(outdir,['mDIXON_' char(types(n)) rootname '.nii']);
+            fname{n} = fullfile(outdir,[rootname '_' char(types(n)) '.nii']);
             if ~isfolder(outdir)
                 mkdir(outdir)
             end
-            writenii(I,fname,theads);
+            writenii(I,fname{n},theads);
         end
     end
 
@@ -136,14 +139,18 @@ function dcm2nii_mDIXON(indir,outdir,rootname)
         info.Datatype = class(I);
         info.AdditiveOffset = theads.RescaleIntercept(1);
         info.MultiplicativeScaling = theads.RescaleSlope(1);
-        info.DisplayIntensityRange = round(mean(cat(2,...
+        info.DisplayIntensityRange = round(median(cat(2,...
             theads.WindowCenter-theads.WindowWidth./2,...
             theads.WindowCenter+theads.WindowWidth./2)))';
         info.Filemoddate = char(datetime);
         info.Version = 'NIfTI1';
         info.Description = '';
         info.ImageSize = size(I);
-        info.PixelDimensions = [theads.PixelSpacing{1}' theads.SpacingBetweenSlices(1)];
+        if ndims(I)==3
+            info.PixelDimensions = [theads.PixelSpacing{1}' theads.SpacingBetweenSlices(1)];
+        elseif ndims(I)==4
+            info.PixelDimensions = [theads.PixelSpacing{1}' theads.SpacingBetweenSlices(1) 1];
+        end
         info.BitsPerPixel = 16;
         info.SpaceUnits = 'Millimeter';
         info.TimeUnits = 'Second';
@@ -156,14 +163,14 @@ function dcm2nii_mDIXON(indir,outdir,rootname)
         info.Transform.Dimensionality = 3;
         ImOrPat = theads.ImageOrientationPatient{1};
         RotMat = [ImOrPat(1:3) ImOrPat(4:6) cross(ImOrPat(1:3),ImOrPat(4:6))];
-        info.Transform.T = info.PixelDimensions.*RotMat;
+        info.Transform.T = info.PixelDimensions(1:3).*RotMat;
         info.Transform.T(4,4) = 1;
-        info.Transform.T(4,1:3) = theads.ImagePositionPatient{1};
+        info.Transform.T(4,1:3) = theads.ImagePositionPatient{end};
         info.Qfactor = 1;
         niftiwrite(rot90(flip(I)),fname,info);
 
         % Get the quarternions, add to header
-        [u,s,v] = svd(info.Transform.T(1:3,1:3)');
+        [u,~,v] = svd(info.Transform.T(1:3,1:3)');
         R = u*v';
         q = dcm2quat(R);
         fid = fopen(fname,'r+');
@@ -172,8 +179,8 @@ function dcm2nii_mDIXON(indir,outdir,rootname)
         fseek(fid,256,'bof');
         fwrite(fid,[q(2:4)' info.Transform.T(4,1:3)],'float');
         fclose(fid);
-        gzip(fname)
-        delete(fname)
+        % gzip(fname)
+        % delete(fname)
     end
 
     % Retrun quaternion abcd from normalized matrix R (3x3)

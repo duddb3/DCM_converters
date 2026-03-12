@@ -13,8 +13,6 @@ function dcm2nii_3DVANE(indir,outdir,rootname)
 
     if ~exist('rootname','var')
         [~,rootname] = fileparts(indir);
-    elseif ~strcmp(rootname(1),'_')
-        rootname = ['_' rootname];
     end
 
     % Get list of dicom files
@@ -74,8 +72,8 @@ function dcm2nii_3DVANE(indir,outdir,rootname)
         try
             imtype = categorical(heads.Private_2005_1011);
             if ~all(ismember(imtype,{'W','F','IP','OP'}))
-                fprintf(2,'Unexpected image types in input directory. Aborting\n')
-                return
+                fprintf(2,'Unexpected image types in input directory. Check your output.\n')
+                imtype = categorical(cellfun(@(f) strrep(f,'\','_'),heads.ImageType,'Uni',0));
             end
         catch
             try
@@ -85,12 +83,13 @@ function dcm2nii_3DVANE(indir,outdir,rootname)
                 ipi = find(contains(utypes,'\IP\IP\'));
                 opi = find(contains(utypes,'\OP\OP\'));
                 if length(utypes)~=4 ||  ~all(ismember([wi fi ipi opi],1:4))
-                    fprintf(2,'Unexpected image types in input directory. Aborting\n')
-                    return
+                    fprintf(2,'Unexpected image types in input directory. Check your output.\n')
+                    imtype = categorical(cellfun(@(f) strrep(f,'\','_'),heads.ImageType,'Uni',0));
+                else
+                    imtype = categorical(heads.ImageType,...
+                        utypes([wi fi ipi opi]),...
+                        {'W','F','IP','OP'});
                 end
-                imtype = categorical(heads.ImageType,...
-                    utypes([wi fi ipi opi]),...
-                    {'W','F','IP','OP'});
             catch
                 fprintf(2,'Input directory does not contain imaging data. Aborting\n')
                 return
@@ -122,7 +121,7 @@ function dcm2nii_3DVANE(indir,outdir,rootname)
             end
 
             % Save the nifti file
-            fname = fullfile(outdir,['mDIXON_' char(types(n)) suffix '.nii']);
+            fname = fullfile(outdir,[rootname '_' char(types(n)) '.nii']);
             if ~isfolder(outdir)
                 mkdir(outdir)
             end

@@ -104,21 +104,27 @@ function fname = dcm2nii_mDIXON(indir,outdir,rootname)
             theads = heads(imtype==types(n),:);
             % find the unique slice locations and their order (ascending)
             theads = sortrows(theads,'SliceLocation');
+            theads.SliceLocation = round(theads.SliceLocation,3);
             [~,ia,ic] = unique(theads.SliceLocation,'stable');
+            numframes = length(ic)/length(ia);
+            if rem(numframes,1)
+                fprintf('Warning: unexpected number of DICOM images found. Check your output\n')
+                numframes = round(numframes);
+            end
             % Instantiate image array
             tmpI = dicomread(theads.Filename{1});
             switch class(tmpI)
                 case 'int16'
-                    I = int16(zeros(theads.Rows(1),theads.Columns(1),length(ia),length(ic)/length(ia)));
+                    I = int16(zeros(theads.Rows(1),theads.Columns(1),length(ia),numframes));
                 case 'uint16'
-                    I = uint16(zeros(theads.Rows(1),theads.Columns(1),length(ia),length(ic)/length(ia)));
+                    I = uint16(zeros(theads.Rows(1),theads.Columns(1),length(ia),numframes));
                 otherwise
                     fprintf(sprintf('Image type was %s (expected int16 or uint16), skipping\n',class(tmpI)))
                     continue
             end
             for s=1:length(ia)
                 frames = find(ic==ic(ia(s)));
-                for d=1:length(frames)
+                for d=1:numframes%length(frames)
                     % Read the image
                     I(:,:,end-s+1,d) = dicomread(theads.Filename{frames(d)});
                 end
